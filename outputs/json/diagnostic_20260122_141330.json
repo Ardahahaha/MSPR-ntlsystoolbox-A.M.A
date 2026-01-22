@@ -1,0 +1,18 @@
+{
+    "module": "diagnostic",
+    "timestamp": "2026-01-22T14:13:30.635993",
+    "data": {
+        "timestamp": 1769087603.7217486,
+        "dns_ad": false,
+        "port_ldap_389": false,
+        "metrics": {
+            "cpu_percent": 1.4,
+            "ram_percent": 57.6,
+            "disk_percent": 97.2
+        },
+        "database": {
+            "status": "ERROR",
+            "message": "(2003, \"Can't connect to MySQL server on '127.0.0.1' ([WinError 10061] Aucune connexion n\u2019a pu \u00eatre \u00e9tablie car l\u2019ordinateur cible l\u2019a express\u00e9ment refus\u00e9e)\")"
+        }
+    }
+}

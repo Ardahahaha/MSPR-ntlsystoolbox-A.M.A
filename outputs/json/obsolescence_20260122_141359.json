@@ -1,0 +1,33 @@
+{
+    "module": "obsolescence",
+    "timestamp": "2026-01-22T14:13:59.572290",
+    "data": {
+        "report": "outputs/audit_report.html",
+        "items": [
+            {
+                "product": "python",
+                "version": "3.8",
+                "eol": "2024-10-07",
+                "status": "EOL"
+            },
+            {
+                "product": "debian",
+                "version": "10",
+                "eol": "2022-09-10",
+                "status": "EOL"
+            },
+            {
+                "product": "mysql",
+                "version": "5.7",
+                "eol": "2023-10-31",
+                "status": "EOL"
+            }
+        ],
+        "network": [
+            {
+                "ip": "192.168.1.1",
+                "status": "UP"
+            }
+        ]
+    }
+}

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ntl-systoolbox"
+version = "1.0.0"
+description = "Boîte à outils d'administration système NTL (Diagnostic, Backup WMS, Audit)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "psutil>=5.9.0",
+    "pymysql>=1.0.0",
+    "questionary>=2.0.0",
+    "requests>=2.31.0",
+    "pyyaml>=6.0.0"
+]
+
+[project.scripts]
+ntl-systoolbox = "ntl_systoolbox.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,14 @@
+{
+    "module": "backup_wms",
+    "timestamp": "2026-01-22T14:13:58.042940",
+    "data": {
+        "sql": {
+            "status": "ERROR",
+            "message": "(2003, \"Can't connect to MySQL server on 'invalid_host' ([Errno 11001] getaddrinfo failed)\")"
+        },
+        "csv": {
+            "status": "ERROR",
+            "message": "(2003, \"Can't connect to MySQL server on 'invalid_host' ([Errno 11001] getaddrinfo failed)\")"
+        }
+    }
+}
