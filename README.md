@@ -10,7 +10,7 @@ Outil industriel 100% Python pour le diagnostic réseau, la sauvegarde WMS et l'
 
 2) **Cloner le repo**
    ```bash
-   git clone <url-du-repo>
+   git clone https://github.com/Ardahahaha/MSPR-ntlsystoolbox-A.M.A
    cd orchids-ntlsystoolbox-spec
    ```
 
