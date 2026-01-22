@@ -7,9 +7,9 @@ from datetime import datetime
 # Setup path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
-from ntl_systoolbox.modules.diagnostic import DiagnosticModule
-from ntl_systoolbox.modules.backup_wms import BackupWMSModule
-from ntl_systoolbox.modules.audit_obsolescence import AuditObsolescenceModule
+from ntlsystoolbox.modules.diagnostic import DiagnosticModule
+from ntlsystoolbox.modules.backup_wms import BackupWMSModule
+from ntlsystoolbox.modules.audit_obsolescence import AuditObsolescenceModule
 
 def test_diagnostic():
     print("\n--- Test Diagnostic ---")

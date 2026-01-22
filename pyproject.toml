@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ntl-systoolbox = "ntl_systoolbox.main:main"
+ntl-systoolbox = "ntlsystoolbox.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

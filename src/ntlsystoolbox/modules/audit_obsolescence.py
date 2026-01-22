@@ -1,6 +1,5 @@
 import requests
 import os
-import socket
 from datetime import datetime
 from ..utils.output import format_result
 
@@ -17,7 +16,10 @@ class AuditObsolescenceModule:
                 eol_date = data.get("eol")
                 is_eol = False
                 if isinstance(eol_date, str):
-                    is_eol = datetime.strptime(eol_date, "%Y-%m-%d") < datetime.now()
+                    try:
+                        is_eol = datetime.strptime(eol_date, "%Y-%m-%d") < datetime.now()
+                    except:
+                        pass
                 return {
                     "product": product,
                     "version": version,
@@ -28,21 +30,28 @@ class AuditObsolescenceModule:
             pass
         return {"product": product, "version": version, "status": "UNKNOWN"}
 
-    def scan_network_minimal(self):
-        # Scan réseau minimal (périmètre fonctionnel)
-        print("Scan réseau en cours (segment local)...")
-        # Logique simplifiée pour l'exemple
-        return [{"ip": "192.168.1.1", "status": "UP"}]
-
     def run(self):
         print("\n--- Audit Obsolescence ---")
-        network = self.scan_network_minimal()
         
-        targets = [("python", "3.8"), ("debian", "10"), ("mysql", "5.7")]
+        # Choix de la cible
+        print("Cibles par défaut : python 3.8, debian 10, mysql 5.7")
+        custom = input("Voulez-vous tester un produit spécifique ? (laisser vide pour défaut, sinon format 'produit version') : ").strip()
+        
+        if custom:
+            try:
+                p, v = custom.split()
+                targets = [(p, v)]
+            except:
+                print("Format invalide, utilisation des cibles par défaut.")
+                targets = [("python", "3.8"), ("debian", "10"), ("mysql", "5.7")]
+        else:
+            targets = [("python", "3.8"), ("debian", "10"), ("mysql", "5.7")]
+        
+        print(f"Vérification de {len(targets)} cible(s)...")
         results = [self.check_eol(p, v) for p, v in targets]
         
-        html_file = "outputs/audit_report.html"
-        os.makedirs("outputs", exist_ok=True)
+        html_file = "reports/audit_report.html"
+        os.makedirs("reports", exist_ok=True)
         with open(html_file, "w", encoding='utf-8') as f:
             f.write("<html><head><meta charset='UTF-8'><title>Rapport Obsolescence</title></head><body>")
             f.write("<h1>Rapport Obsolescence NTL</h1><table border='1'>")
@@ -51,5 +60,6 @@ class AuditObsolescenceModule:
                 f.write(f"<tr><td>{r['product']}</td><td>{r['version']}</td><td>{r.get('eol', 'N/A')}</td><td>{r['status']}</td></tr>")
             f.write("</table></body></html>")
             
-        format_result("obsolescence", {"report": html_file, "items": results, "network": network})
+        print(f"Rapport HTML généré : {html_file}")
+        format_result("obsolescence", {"report": html_file, "items": results})
         return 0

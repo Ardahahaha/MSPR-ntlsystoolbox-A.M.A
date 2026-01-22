@@ -12,8 +12,8 @@ def format_result(module_name: str, data: dict):
     
     print(f"\n[SUCCESS] Module {module_name} terminé.")
     
-    os.makedirs("outputs/json", exist_ok=True)
-    filename = f"outputs/json/{module_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    os.makedirs("reports/json", exist_ok=True)
+    filename = f"reports/json/{module_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, "w", encoding='utf-8') as f:
         json.dump(output, f, indent=4)
     print(f"Rapport généré : {filename}")

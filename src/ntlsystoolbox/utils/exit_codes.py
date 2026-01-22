@@ -1,0 +1,8 @@
+# Codes de sortie standardisés
+SUCCESS = 0
+WARNING = 1
+CRITICAL = 2
+ERR_CONFIG = 10
+ERR_DB = 11
+ERR_NETWORK = 12
+ERR_UNKNOWN = 99
