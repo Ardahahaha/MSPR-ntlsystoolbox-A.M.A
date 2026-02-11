@@ -1,128 +1,287 @@
-import pymysql
+# src/ntlsystoolbox/modules/backup_wms.py
+from __future__ import annotations
+
 import csv
+import hashlib
 import os
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Any
+from getpass import getpass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import pymysql
 
 from ntlsystoolbox.core.result import ModuleResult, status_from_two_flags
-from ..utils.output import format_result
+
+
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _env(key: str, default: Optional[str] = None) -> Optional[str]:
+    val = os.getenv(key)
+    return val if val not in (None, "") else default
+
+
+def _prompt(msg: str, default: Optional[str] = None) -> str:
+    suffix = f" [{default}]" if default else ""
+    v = input(f"{msg}{suffix} : ").strip()
+    return v if v else (default or "")
+
+
+@dataclass
+class DBConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    db: str
+    csv_table: Optional[str] = None
+
 
 class BackupWMSModule:
+    """
+    Sauvegarde WMS :
+    - Dump SQL (schema + data) de la base
+    - Export CSV d'une table
+    """
+
     def __init__(self, config: Dict[str, Any]):
-        self.config = config.get('database', {})
-        self.backup_dir = "reports/backups"
-        os.makedirs(self.backup_dir, exist_ok=True)
+        self.config = config or {}
 
-    def _ensure_config(self):
-        """Demande les paramètres si absents de la config."""
-        if not self.config.get('host'):
-            self.config['host'] = input("Host MySQL [localhost] : ") or "localhost"
-        if not self.config.get('user'):
-            self.config['user'] = input("Utilisateur MySQL [root] : ") or "root"
-        if 'password' not in self.config:
-            self.config['password'] = input("Mot de passe MySQL : ")
-        if not self.config.get('name'):
-            self.config['name'] = input("Nom de la base [wms] : ") or "wms"
+    def _load_db_config(self) -> DBConfig:
+        # config dict support: config["database"] = {...}
+        db_cfg = self.config.get("database", {}) if isinstance(self.config, dict) else {}
 
-    def run_dump(self):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{self.backup_dir}/wms_backup_{timestamp}.sql"
-        
+        # Defaults: IMPORTANT -> pas localhost si tu as une DB distante
+        default_host = _env("NTL_DB_HOST", db_cfg.get("host", "192.168.10.21"))
+        default_port = _env("NTL_DB_PORT", str(db_cfg.get("port", 3306)))
+        default_user = _env("NTL_DB_USER", db_cfg.get("user", "root"))
+        default_db = _env("NTL_DB_NAME", db_cfg.get("name", "wms"))
+        default_table = _env("NTL_DB_TABLE", db_cfg.get("table", "")) or None
+
+        print("\n--- Configuration Sauvegarde WMS ---\n")
+        host = _prompt("Host MySQL (ex: 192.168.10.21)", default_host)
+        port_str = _prompt("Port MySQL", default_port)
         try:
-            conn = pymysql.connect(
-                host=self.config.get('host'),
-                user=self.config.get('user'),
-                password=self.config.get('password'),
-                database=self.config.get('name')
-            )
-            with conn.cursor() as cursor:
-                cursor.execute("SHOW TABLES")
-                tables = cursor.fetchall()
-                if not tables:
-                    return {"status": "WARNING", "message": "Aucune table trouvée."}
-                
-                with open(filename, 'w', encoding='utf-8') as f:
-                    for (table_name,) in tables:
-                        f.write(f"\n-- Table: {table_name}\n")
-                        cursor.execute(f"SHOW CREATE TABLE {table_name}")
-                        create_stmt = cursor.fetchone()[1]
-                        f.write(f"{create_stmt};\n")
-            conn.close()
-            return {"status": "OK", "file": filename}
-        except Exception as e:
-            return {"status": "ERROR", "message": str(e)}
+            port = int(port_str)
+        except ValueError:
+            port = 3306
 
-    def run_csv_export(self):
-        filename = f"{self.backup_dir}/stock_export_{datetime.now().strftime('%Y%m%d')}.csv"
+        user = _prompt("Utilisateur", default_user)
+
+        # Password: env > config > prompt
+        pwd = _env("NTL_DB_PASS", db_cfg.get("password", ""))
+        if not pwd:
+            pwd = getpass("Mot de passe (input masqué, vide si aucun) : ")
+
+        db = _prompt("Nom de la base", default_db)
+
+        table = _prompt("Table à exporter en CSV (optionnel)", default_table or "")
+        csv_table = table.strip() or None
+
+        return DBConfig(host=host, port=port, user=user, password=pwd, db=db, csv_table=csv_table)
+
+    def _connect(self, dbc: DBConfig):
+        return pymysql.connect(
+            host=dbc.host,
+            port=dbc.port,
+            user=dbc.user,
+            password=dbc.password,
+            database=dbc.db,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.Cursor,
+            autocommit=True,
+        )
+
+    def _fetch_tables(self, conn) -> List[str]:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES")
+            rows = cur.fetchall()
+        return [r[0] for r in rows]
+
+    def _dump_sql(self, conn, dbc: DBConfig, out_dir: str) -> Tuple[bool, str, Optional[str]]:
+        """
+        Dump SQL minimal : DROP TABLE + CREATE TABLE + INSERT INTO
+        """
         try:
-            conn = pymysql.connect(
-                host=self.config.get('host'),
-                user=self.config.get('user'),
-                password=self.config.get('password'),
-                database=self.config.get('name')
-            )
-            with conn.cursor() as cursor:
-                try:
-                    cursor.execute("SELECT * FROM stock LIMIT 1000")
-                    rows = cursor.fetchall()
-                    with open(filename, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([i[0] for i in cursor.description])
-                        writer.writerows(rows)
-                    conn.close()
-                    return {"status": "OK", "file": filename}
-                except Exception:
-                    conn.close()
-                    return {"status": "SKIP", "message": "Table 'stock' non trouvée."}
-        except Exception as e:
-            return {"status": "ERROR", "message": str(e)}
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_path = str(Path(out_dir) / f"wms_backup_{dbc.db}_{ts}.sql")
 
-    def run(self):
-        print("\n--- Configuration Sauvegarde WMS ---")
-        self._ensure_config()
-        
+            tables = self._fetch_tables(conn)
+            if not tables:
+                return False, "Aucune table trouvée dans la base.", None
+
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(f"-- NTL SysToolbox SQL Backup\n")
+                f.write(f"-- Database: {dbc.db}\n")
+                f.write(f"-- Generated: {datetime.now().isoformat(timespec='seconds')}\n\n")
+                f.write(f"SET FOREIGN_KEY_CHECKS=0;\n\n")
+
+                for table in tables:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SHOW CREATE TABLE `{table}`")
+                        row = cur.fetchone()
+                        create_stmt = row[1] if row and len(row) > 1 else None
+
+                    if not create_stmt:
+                        continue
+
+                    f.write(f"-- Table: `{table}`\n")
+                    f.write(f"DROP TABLE IF EXISTS `{table}`;\n")
+                    f.write(create_stmt + ";\n\n")
+
+                    # Dump data
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT * FROM `{table}`")
+                        cols = [d[0] for d in cur.description] if cur.description else []
+                        if not cols:
+                            f.write("\n")
+                            continue
+                        col_list = ", ".join(f"`{c}`" for c in cols)
+
+                        while True:
+                            rows = cur.fetchmany(500)
+                            if not rows:
+                                break
+
+                            f.write(f"INSERT INTO `{table}` ({col_list}) VALUES\n")
+                            values_lines = []
+                            for r in rows:
+                                vals = []
+                                for v in r:
+                                    # bytes -> hex literal
+                                    if isinstance(v, (bytes, bytearray)):
+                                        vals.append("0x" + bytes(v).hex())
+                                    else:
+                                        # conn.escape ajoute les quotes si nécessaire
+                                        vals.append(conn.escape(v))
+                                values_lines.append("(" + ", ".join(vals) + ")")
+                            f.write(",\n".join(values_lines) + ";\n\n")
+
+                f.write("SET FOREIGN_KEY_CHECKS=1;\n")
+
+            return True, "Dump SQL généré.", out_path
+
+        except Exception as e:
+            return False, f"{e}", None
+
+    def _export_csv(self, conn, dbc: DBConfig, out_dir: str) -> Tuple[bool, str, Optional[str]]:
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            table = dbc.csv_table
+            tables = self._fetch_tables(conn)
+
+            if not tables:
+                return False, "Aucune table trouvée dans la base.", None
+
+            if not table:
+                # fallback : première table
+                table = tables[0]
+
+            if table not in tables:
+                return False, f"Table '{table}' introuvable. Tables dispo: {', '.join(tables[:10])}", None
+
+            out_path = str(Path(out_dir) / f"wms_export_{table}_{ts}.csv")
+
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT * FROM `{table}`")
+                cols = [d[0] for d in cur.description] if cur.description else []
+
+                with open(out_path, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    if cols:
+                        w.writerow(cols)
+
+                    while True:
+                        rows = cur.fetchmany(1000)
+                        if not rows:
+                            break
+                        w.writerows(rows)
+
+            return True, f"Export CSV généré (table={table}).", out_path
+
+        except Exception as e:
+            return False, f"{e}", None
+
+    def run(self) -> ModuleResult:
+        started = datetime.now().isoformat(timespec="seconds")
+        dbc = self._load_db_config()
+
+        sql_ok = False
+        csv_ok = False
+        sql_msg = ""
+        csv_msg = ""
+        sql_path = None
+        csv_path = None
+
         print("\nExécution des sauvegardes...")
-        
-        # Initialisation des flags et données
-        sql_ok, csv_ok = False, False
-        sql_msg, csv_msg = "", ""
-        sql_path, csv_path = None, None
 
-        # Exécution SQL
-        res_sql = self.run_dump()
-        if res_sql['status'] == "OK":
-            sql_ok = True
-            sql_path = res_sql.get('file')
-        else:
-            sql_msg = res_sql.get('message', "Erreur inconnue")
+        try:
+            conn = self._connect(dbc)
+        except Exception as e:
+            # Si pas de connexion, les deux échouent
+            sql_msg = f"Connexion MySQL impossible: {e}"
+            csv_msg = f"Connexion MySQL impossible: {e}"
+            status = "ERROR"
+            return ModuleResult(
+                module="backup_wms",
+                status=status,
+                summary="Sauvegarde WMS impossible (connexion DB KO)",
+                details={
+                    "host": dbc.host,
+                    "port": dbc.port,
+                    "db": dbc.db,
+                    "sql": f"FAIL ({sql_msg})",
+                    "csv": f"FAIL ({csv_msg})",
+                },
+                artifacts={},
+                started_at=started,
+            ).finish()
 
-        # Exécution CSV
-        res_csv = self.run_csv_export()
-        if res_csv['status'] == "OK":
-            csv_ok = True
-            csv_path = res_csv.get('file')
-        else:
-            csv_msg = res_csv.get('message', "Erreur ou table absente")
+        try:
+            sql_ok, sql_msg, sql_path = self._dump_sql(conn, dbc, out_dir="reports/backup/sql")
+            print(f"SQL: {'OK' if sql_ok else 'ERROR'} ({sql_msg})")
 
-        # Affichage console pour debug immédiat
-        print(f"SQL: {res_sql['status']} ({sql_path if sql_ok else sql_msg})")
-        print(f"CSV: {res_csv['status']} ({csv_path if csv_ok else csv_msg})")
+            csv_ok, csv_msg, csv_path = self._export_csv(conn, dbc, out_dir="reports/backup/csv")
+            print(f"CSV: {'OK' if csv_ok else 'ERROR'} ({csv_msg})")
 
-        # Construction du résultat structuré
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
         status = status_from_two_flags(sql_ok, csv_ok)
 
-        result = ModuleResult(
+        artifacts: Dict[str, str] = {}
+        if sql_ok and sql_path:
+            artifacts["sql_backup_path"] = sql_path
+            artifacts["sql_backup_sha256"] = _sha256_file(sql_path)
+        if csv_ok and csv_path:
+            artifacts["csv_export_path"] = csv_path
+            artifacts["csv_export_sha256"] = _sha256_file(csv_path)
+
+        return ModuleResult(
             module="backup_wms",
             status=status,
             summary="Sauvegarde WMS SQL/CSV",
             details={
+                "host": dbc.host,
+                "port": dbc.port,
+                "db": dbc.db,
                 "sql": "OK" if sql_ok else f"FAIL ({sql_msg})",
                 "csv": "OK" if csv_ok else f"FAIL ({csv_msg})",
+                "csv_table": dbc.csv_table or "(auto)",
             },
-            artifacts={
-                **({"sql_backup": sql_path} if sql_ok and sql_path else {}),
-                **({"csv_export": csv_path} if csv_ok and csv_path else {}),
-            },
+            artifacts=artifacts,
+            started_at=started,
         ).finish()
-
-        return result
