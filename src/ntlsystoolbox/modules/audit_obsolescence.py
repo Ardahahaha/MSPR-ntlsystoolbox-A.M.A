@@ -240,7 +240,6 @@ class AuditObsolescenceModule:
 
     def _list_versions_eol(self, product: str) -> Tuple[List[Dict[str, Any]], EOLMeta]:
         data, meta = self.provider.fetch_product(product)
-        # Normalisation: on garde surtout "cycle" + "eol" + "latest" si présent
         rows: List[Dict[str, Any]] = []
         for item in data:
             if not isinstance(item, dict):
@@ -256,7 +255,6 @@ class AuditObsolescenceModule:
                     "releaseDate": item.get("releaseDate") or item.get("released"),
                 }
             )
-        # filtre cycles vides
         rows = [r for r in rows if r.get("cycle")]
         return rows, meta
 
@@ -275,9 +273,6 @@ class AuditObsolescenceModule:
 
             items: List[Dict[str, str]] = []
             for row in reader:
-                # colonnes tolérées:
-                # - product/os + version/cycle
-                # - name/hostname facultatif
                 product = (row.get("product") or row.get("os") or row.get("OS") or row.get("Produit") or row.get("produit") or "").strip().lower()
                 version = (row.get("version") or row.get("cycle") or row.get("Version") or row.get("version_os") or "").strip()
                 name = (row.get("name") or row.get("hostname") or row.get("machine") or row.get("composant") or row.get("Composant") or "").strip()
@@ -288,11 +283,6 @@ class AuditObsolescenceModule:
         return items
 
     def _match_cycle(self, rows: List[Dict[str, Any]], version: str) -> Optional[Dict[str, Any]]:
-        """
-        Match simple:
-        - si version commence par cycle (ex: version=20.04.6, cycle=20.04)
-        - ou égalité directe
-        """
         v = version.strip()
         for r in rows:
             c = str(r.get("cycle", "")).strip()
@@ -310,8 +300,6 @@ class AuditObsolescenceModule:
         meta_by_product: Dict[str, EOLMeta],
         soon_days: int,
     ) -> Dict[str, Any]:
-        today = datetime.now().date()
-
         counts = {"OK": 0, "SOON": 0, "EOL": 0, "UNKNOWN": 0}
         for c in components:
             counts[c["support_status"]] += 1
@@ -329,14 +317,12 @@ class AuditObsolescenceModule:
             f.write(f"<h1>Audit d'obsolescence</h1>")
             f.write(f"<p>Généré le <b>{esc(datetime.now().isoformat(timespec='seconds'))}</b> | Seuil 'bientôt' = {soon_days} jours</p>")
 
-            # Sources
             f.write("<h2>Sources EOL (référence + date de validité)</h2><ul>")
             for prod, m in meta_by_product.items():
                 f.write(f"<li>{esc(prod)} — source: {esc(m.source)} — fetch: {esc(m.fetched_at_iso)} — mode: {esc(m.api_mode)}</li>")
             f.write("</ul>")
 
-            f.write("<h2>Résumé</h2>")
-            f.write("<ul>")
+            f.write("<h2>Résumé</h2><ul>")
             f.write(f"<li>OK: {counts['OK']}</li>")
             f.write(f"<li>Bientôt EOL: {counts['SOON']}</li>")
             f.write(f"<li>EOL: {counts['EOL']}</li>")
@@ -372,24 +358,28 @@ class AuditObsolescenceModule:
 
         return {"counts": counts, "report_path": out_path}
 
-    def run(self) -> ModuleResult:
+    # ✅ NOUVEAU : version non-interactive pilotée par main.py
+    def run_action(self, action: str, **kwargs) -> ModuleResult:
         started = datetime.now().isoformat(timespec="seconds")
-        soon_days = int(_env("NTL_EOL_SOON_DAYS", "180") or "180")
+        soon_days = int(_env("NTL_EOL_SOON_DAYS", str(kwargs.get("soon_days", 180))) or "180")
 
-        choice = self._menu()
+        # 1) Scan
+        if action == "scan_range":
+            cidr = (kwargs.get("cidr") or "").strip()
+            if not cidr:
+                return ModuleResult(
+                    module="obsolescence",
+                    status="ERROR",
+                    summary="CIDR manquant pour scan_range",
+                    details={"action": action},
+                    started_at=started,
+                ).finish()
 
-        # Action 1: scan
-        if choice == "1":
-            default_cidr = _env("NTL_SCAN_CIDR", "192.168.10.0/24")
-            cidr = _prompt("Plage réseau (CIDR)", default_cidr)
-
-            print(f"\nScan en cours sur {cidr} ...")
             inventory, stats = self._scan_range(cidr)
 
             status = "SUCCESS" if inventory else "WARNING"
             summary = f"Scan terminé: {len(inventory)} hôte(s) trouvé(s)" if inventory else "Scan terminé: aucun hôte détecté"
 
-            # Artefact: sauvegarde inventaire JSON en plus du report JSON global
             out_inv = f"reports/audit/inventory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             _ensure_dir("reports/audit")
             with open(out_inv, "w", encoding="utf-8") as f:
@@ -404,9 +394,18 @@ class AuditObsolescenceModule:
                 started_at=started,
             ).finish()
 
-        # Action 2: list versions + EOL
-        if choice == "2":
-            product = _prompt("Produit/OS (ex: ubuntu, debian, windows, mysql, python)", "ubuntu").lower().strip()
+        # 2) Listing versions + EOL
+        if action == "list_versions_eol":
+            product = (kwargs.get("product") or "").strip().lower()
+            if not product:
+                return ModuleResult(
+                    module="obsolescence",
+                    status="ERROR",
+                    summary="Produit manquant pour list_versions_eol",
+                    details={"action": action},
+                    started_at=started,
+                ).finish()
+
             rows, meta = self._list_versions_eol(product)
 
             today = datetime.now().date()
@@ -415,14 +414,13 @@ class AuditObsolescenceModule:
                 st, eol_date = _status_from_eol(today, r.get("eol"), soon_days)
                 enriched.append({**r, "support_status": st, "eol_date": eol_date})
 
-            # status: WARNING si au moins un EOL/SOON, sinon SUCCESS (et WARNING si rien)
             if not enriched:
                 status = "WARNING"
                 summary = f"Aucune donnée EOL pour '{product}'"
             else:
                 any_bad = any(x["support_status"] in ("SOON", "EOL") for x in enriched)
                 status = "WARNING" if any_bad else "SUCCESS"
-                summary = f"Versions/EOL récupérées pour '{product}' (source {meta.source}, mode {meta.api_mode})"
+                summary = f"Versions/EOL récupérées pour '{product}' (mode {meta.api_mode})"
 
             return ModuleResult(
                 module="obsolescence",
@@ -433,23 +431,37 @@ class AuditObsolescenceModule:
                 started_at=started,
             ).finish()
 
-        # Action 3: CSV + report
-        if choice == "3":
-            default_csv = _env("NTL_COMPONENTS_CSV", "inputs/components.csv")
-            csv_path = _prompt("Chemin CSV composants", default_csv)
+        # 3) CSV -> EOL + rapport HTML (option scan)
+        if action == "csv_to_report":
+            csv_path = (kwargs.get("csv_path") or "").strip()
+            if not csv_path:
+                return ModuleResult(
+                    module="obsolescence",
+                    status="ERROR",
+                    summary="CSV manquant pour csv_to_report",
+                    details={"action": action},
+                    started_at=started,
+                ).finish()
 
-            # Optionnel: scan réseau en plus, pour enrichir le rapport
-            do_scan = _prompt("Faire aussi un scan réseau ? (y/n)", "n").lower().startswith("y")
+            do_scan = bool(kwargs.get("do_scan", False))
+            cidr = (kwargs.get("cidr") or "").strip() if do_scan else ""
+
+            if do_scan and not cidr:
+                return ModuleResult(
+                    module="obsolescence",
+                    status="ERROR",
+                    summary="CIDR manquant (do_scan=True) pour csv_to_report",
+                    details={"action": action},
+                    started_at=started,
+                ).finish()
+
             inventory = None
             inv_stats = None
             if do_scan:
-                cidr = _prompt("Plage réseau (CIDR)", _env("NTL_SCAN_CIDR", "192.168.10.0/24"))
-                print(f"\nScan en cours sur {cidr} ...")
                 inventory, inv_stats = self._scan_range(cidr)
 
             components_raw = self._read_components_csv(csv_path)
 
-            # Group by product to minimize API calls
             by_product: Dict[str, List[Dict[str, str]]] = {}
             for c in components_raw:
                 by_product.setdefault(c["product"], []).append(c)
@@ -469,16 +481,9 @@ class AuditObsolescenceModule:
                     else:
                         st, eol_date = "UNKNOWN", None
                     resolved.append(
-                        {
-                            "name": c["name"],
-                            "product": product,
-                            "version": c["version"],
-                            "eol_date": eol_date,
-                            "support_status": st,
-                        }
+                        {"name": c["name"], "product": product, "version": c["version"], "eol_date": eol_date, "support_status": st}
                     )
 
-            # HTML report
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             out_html = f"reports/audit/audit_report_{ts}.html"
             report_info = self._generate_html_report(
@@ -489,51 +494,66 @@ class AuditObsolescenceModule:
                 soon_days=soon_days,
             )
 
-            # status
             any_eol = any(r["support_status"] == "EOL" for r in resolved)
             any_soon = any(r["support_status"] == "SOON" for r in resolved)
             any_unknown = any(r["support_status"] == "UNKNOWN" for r in resolved)
 
-            if any_eol:
+            if any_eol or any_soon or any_unknown:
                 status = "WARNING"
-                summary = "Audit terminé: au moins un composant EOL"
-            elif any_soon:
-                status = "WARNING"
-                summary = "Audit terminé: au moins un composant bientôt EOL"
-            elif any_unknown:
-                status = "WARNING"
-                summary = "Audit terminé: certains composants non résolus (unknown)"
+                summary = "Audit terminé: composants EOL/SOON/UNKNOWN détectés"
             else:
                 status = "SUCCESS"
-                summary = "Audit terminé: aucun composant en EOL / bientôt EOL"
-
-            details: Dict[str, Any] = {
-                "action": "csv_to_eol_and_report",
-                "csv_path": csv_path,
-                "scan": {"enabled": do_scan, "stats": inv_stats, "inventory_count": (len(inventory) if inventory else 0)},
-                "meta_by_product": {k: v.__dict__ for k, v in meta_by_product.items()},
-                "components": resolved,
-                "report": report_info,
-                "soon_days": soon_days,
-            }
-
-            artifacts = {"audit_report_html": out_html}
+                summary = "Audit terminé: aucun composant EOL/SOON"
 
             return ModuleResult(
                 module="obsolescence",
                 status=status,
                 summary=summary,
-                details=details,
-                artifacts=artifacts,
+                details={
+                    "action": "csv_to_eol_and_report",
+                    "csv_path": csv_path,
+                    "scan": {"enabled": do_scan, "stats": inv_stats, "inventory_count": (len(inventory) if inventory else 0)},
+                    "meta_by_product": {k: v.__dict__ for k, v in meta_by_product.items()},
+                    "components": resolved,
+                    "report": report_info,
+                    "soon_days": soon_days,
+                },
+                artifacts={"audit_report_html": out_html},
                 started_at=started,
             ).finish()
 
-        # Retour / défaut
+        return ModuleResult(
+            module="obsolescence",
+            status="ERROR",
+            summary=f"Action inconnue: {action}",
+            details={"action": action},
+            started_at=started,
+        ).finish()
+
+    # ✅ run() reste interactif, mais délègue à run_action()
+    def run(self) -> ModuleResult:
+        choice = self._menu()
+
+        if choice == "1":
+            cidr = _prompt("Plage réseau (CIDR)", _env("NTL_SCAN_CIDR", "192.168.10.0/24"))
+            return self.run_action("scan_range", cidr=cidr)
+
+        if choice == "2":
+            product = _prompt("Produit/OS (ex: ubuntu, debian, windows, mysql, python)", "ubuntu")
+            return self.run_action("list_versions_eol", product=product)
+
+        if choice == "3":
+            csv_path = _prompt("Chemin CSV composants", _env("NTL_COMPONENTS_CSV", "inputs/components.csv"))
+            do_scan = _prompt("Faire aussi un scan réseau ? (y/n)", "n").lower().startswith("y")
+            cidr = None
+            if do_scan:
+                cidr = _prompt("Plage réseau (CIDR)", _env("NTL_SCAN_CIDR", "192.168.10.0/24"))
+            return self.run_action("csv_to_report", csv_path=csv_path, do_scan=do_scan, cidr=cidr)
+
         return ModuleResult(
             module="obsolescence",
             status="SUCCESS",
             summary="Retour menu principal",
             details={"action": "exit"},
             artifacts={},
-            started_at=started,
         ).finish()
