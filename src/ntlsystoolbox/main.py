@@ -1,5 +1,7 @@
 import sys
 import os
+from ntlsystoolbox.core.reporting import save_json_report, print_result
+from ntlsystoolbox.core.result import ModuleResult
 from .core.menu import run_menu
 from .utils.config import load_config
 from .utils.exit_codes import CRITICAL
@@ -25,6 +27,10 @@ def main():
     
     try:
         run_menu(config)
+        result: ModuleResult = module.run()
+json_path = save_json_report(result)     # JSON MSPR "officiel" avec status + exit_code
+print_result(result, json_path=json_path)
+input("\nAppuyez sur Entrée pour revenir au menu...")
     except KeyboardInterrupt:
         print("\n[CRITICAL] Interruption utilisateur (Ctrl+C).")
         sys.exit(CRITICAL)
