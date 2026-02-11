@@ -1,0 +1,46 @@
+# src/ntlsystoolbox/core/result.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict
+
+
+STATUS_TO_EXIT_CODE = {
+    "SUCCESS": 0,
+    "WARNING": 1,
+    "CRITICAL": 2,
+    "ERROR": 3,
+    "UNKNOWN": 4,
+}
+
+
+def exit_code_for(status: str) -> int:
+    return STATUS_TO_EXIT_CODE.get(status.upper(), 4)
+
+
+@dataclass
+class ModuleResult:
+    module: str
+    status: str
+    summary: str = ""
+    details: Dict[str, Any] = field(default_factory=dict)
+    artifacts: Dict[str, str] = field(default_factory=dict)
+    started_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    ended_at: str | None = None
+
+    @property
+    def exit_code(self) -> int:
+        return exit_code_for(self.status)
+
+    def finish(self) -> "ModuleResult":
+        self.ended_at = datetime.now().isoformat(timespec="seconds")
+        return self
+
+
+def status_from_two_flags(a_ok: bool, b_ok: bool) -> str:
+    if a_ok and b_ok:
+        return "SUCCESS"
+    if a_ok or b_ok:
+        return "WARNING"
+    return "ERROR"
