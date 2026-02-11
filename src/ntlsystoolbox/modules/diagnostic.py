@@ -3,6 +3,7 @@ import psutil
 import pymysql
 import time
 from typing import Dict, Any
+from ntlsystoolbox.core.result import ModuleResult
 from ..utils.output import format_result
 
 class DiagnosticModule:
@@ -45,12 +46,39 @@ class DiagnosticModule:
 
     def run(self):
         print("\n--- Diagnostic Système ---")
+        
+        # Collecte des données
+        dns_ok = self.check_dns("ad.local")
+        ldap_ok = self.check_tcp_port("127.0.0.1", 389)
+        metrics = self.get_system_metrics()
+        db_res = self.check_mysql()
+        
         results = {
             "timestamp": time.time(),
-            "dns_ad": self.check_dns("ad.local"),
-            "port_ldap_389": self.check_tcp_port("127.0.0.1", 389),
-            "metrics": self.get_system_metrics(),
-            "database": self.check_mysql()
+            "dns_ad": dns_ok,
+            "port_ldap_389": ldap_ok,
+            "metrics": metrics,
+            "database": db_res
         }
+
+        # Affichage console (legacy)
         format_result("diagnostic", results)
-        return 0
+
+        # Détermination du statut global
+        # Si un élément critique (DNS, LDAP ou DB) échoue, on passe en WARNING ou ERROR
+        success = dns_ok and ldap_ok and db_res["status"] == "OK"
+        status = "SUCCESS" if success else "WARNING"
+
+        # Retour avec ModuleResult
+        return ModuleResult(
+            module="diagnostic",
+            status=status,
+            summary="Diagnostic système terminé" if success else "Diagnostic terminé avec des alertes",
+            details={
+                "dns_check": "OK" if dns_ok else "FAILED",
+                "ldap_port": "OPEN" if ldap_ok else "CLOSED",
+                "db_status": db_res["status"],
+                "metrics": metrics
+            },
+            artifacts={},
+        ).finish()
