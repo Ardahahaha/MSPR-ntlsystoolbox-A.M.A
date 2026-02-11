@@ -1,9 +1,10 @@
 import pymysql
 import csv
 import os
-import time
 from datetime import datetime
 from typing import Dict, Any
+
+from ntlsystoolbox.core.result import ModuleResult, status_from_two_flags
 from ..utils.output import format_result
 
 class BackupWMSModule:
@@ -61,7 +62,6 @@ class BackupWMSModule:
                 database=self.config.get('name')
             )
             with conn.cursor() as cursor:
-                # On tente d'exporter la table 'stock' si elle existe
                 try:
                     cursor.execute("SELECT * FROM stock LIMIT 1000")
                     rows = cursor.fetchall()
@@ -71,9 +71,9 @@ class BackupWMSModule:
                         writer.writerows(rows)
                     conn.close()
                     return {"status": "OK", "file": filename}
-                except:
+                except Exception:
                     conn.close()
-                    return {"status": "SKIP", "message": "Table 'stock' non trouvée pour l'export CSV."}
+                    return {"status": "SKIP", "message": "Table 'stock' non trouvée."}
         except Exception as e:
             return {"status": "ERROR", "message": str(e)}
 
@@ -82,11 +82,47 @@ class BackupWMSModule:
         self._ensure_config()
         
         print("\nExécution des sauvegardes...")
+        
+        # Initialisation des flags et données
+        sql_ok, csv_ok = False, False
+        sql_msg, csv_msg = "", ""
+        sql_path, csv_path = None, None
+
+        # Exécution SQL
         res_sql = self.run_dump()
+        if res_sql['status'] == "OK":
+            sql_ok = True
+            sql_path = res_sql.get('file')
+        else:
+            sql_msg = res_sql.get('message', "Erreur inconnue")
+
+        # Exécution CSV
         res_csv = self.run_csv_export()
-        
-        print(f"SQL: {res_sql['status']} ({res_sql.get('file', res_sql.get('message'))})")
-        print(f"CSV: {res_csv['status']} ({res_csv.get('file', res_csv.get('message'))})")
-        
-        format_result("backup_wms", {"sql": res_sql, "csv": res_csv})
-        return 0
+        if res_csv['status'] == "OK":
+            csv_ok = True
+            csv_path = res_csv.get('file')
+        else:
+            csv_msg = res_csv.get('message', "Erreur ou table absente")
+
+        # Affichage console pour debug immédiat
+        print(f"SQL: {res_sql['status']} ({sql_path if sql_ok else sql_msg})")
+        print(f"CSV: {res_csv['status']} ({csv_path if csv_ok else csv_msg})")
+
+        # Construction du résultat structuré
+        status = status_from_two_flags(sql_ok, csv_ok)
+
+        result = ModuleResult(
+            module="backup_wms",
+            status=status,
+            summary="Sauvegarde WMS SQL/CSV",
+            details={
+                "sql": "OK" if sql_ok else f"FAIL ({sql_msg})",
+                "csv": "OK" if csv_ok else f"FAIL ({csv_msg})",
+            },
+            artifacts={
+                **({"sql_backup": sql_path} if sql_ok and sql_path else {}),
+                **({"csv_export": csv_path} if csv_ok and csv_path else {}),
+            },
+        ).finish()
+
+        return result
