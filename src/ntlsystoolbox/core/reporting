@@ -1,0 +1,42 @@
+# src/ntlsystoolbox/core/reporting.py
+import json
+from pathlib import Path
+from typing import Optional
+from datetime import datetime
+
+from ntlsystoolbox.core.result import ModuleResult
+
+
+def save_json_report(result: ModuleResult, out_dir: str = "reports/json") -> str:
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = Path(out_dir) / f"{result.module}_{ts}.json"
+
+    payload = {
+        "module": result.module,
+        "status": result.status,
+        "exit_code": result.exit_code,
+        "summary": result.summary,
+        "details": result.details,
+        "artifacts": result.artifacts,
+        "started_at": result.started_at,
+        "ended_at": result.ended_at,
+    }
+
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(out_path)
+
+
+def print_result(result: ModuleResult, json_path: Optional[str] = None) -> None:
+    print(f"\n[{result.status}] Module {result.module} terminé.")
+    if result.summary:
+        print(f"Résumé : {result.summary}")
+    if result.details:
+        for k, v in result.details.items():
+            print(f"- {k}: {v}")
+    if result.artifacts:
+        for k, v in result.artifacts.items():
+            print(f"- {k}: {v}")
+    if json_path:
+        print(f"Rapport généré : {json_path}")
+    print(f"Exit code : {result.exit_code}")
