@@ -1,4 +1,3 @@
-# src/ntlsystoolbox/modules/backup_wms.py
 from __future__ import annotations
 
 import csv
@@ -29,6 +28,8 @@ def _env(key: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def _prompt(msg: str, default: Optional[str] = None) -> str:
+    if os.getenv("NTL_NON_INTERACTIVE", "0") == "1":
+        return default or ""
     suffix = f" [{default}]" if default else ""
     v = input(f"{msg}{suffix} : ").strip()
     return v if v else (default or "")
@@ -45,20 +46,12 @@ class DBConfig:
 
 
 class BackupWMSModule:
-    """
-    Sauvegarde WMS :
-    - Dump SQL (schema + data) de la base
-    - Export CSV d'une table
-    """
-
     def __init__(self, config: Dict[str, Any]):
         self.config = config or {}
 
     def _load_db_config(self) -> DBConfig:
-        # config dict support: config["database"] = {...}
         db_cfg = self.config.get("database", {}) if isinstance(self.config, dict) else {}
 
-        # Defaults: IMPORTANT -> pas localhost si tu as une DB distante
         default_host = _env("NTL_DB_HOST", db_cfg.get("host", "192.168.10.21"))
         default_port = _env("NTL_DB_PORT", str(db_cfg.get("port", 3306)))
         default_user = _env("NTL_DB_USER", db_cfg.get("user", "root"))
@@ -75,10 +68,11 @@ class BackupWMSModule:
 
         user = _prompt("Utilisateur", default_user)
 
-        # Password: env > config > prompt
         pwd = _env("NTL_DB_PASS", db_cfg.get("password", ""))
-        if not pwd:
+        if not pwd and os.getenv("NTL_NON_INTERACTIVE", "0") != "1":
             pwd = getpass("Mot de passe (input masqué, vide si aucun) : ")
+        if pwd is None:
+            pwd = ""
 
         db = _prompt("Nom de la base", default_db)
 
@@ -106,9 +100,6 @@ class BackupWMSModule:
         return [r[0] for r in rows]
 
     def _dump_sql(self, conn, dbc: DBConfig, out_dir: str) -> Tuple[bool, str, Optional[str]]:
-        """
-        Dump SQL minimal : DROP TABLE + CREATE TABLE + INSERT INTO
-        """
         try:
             Path(out_dir).mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -119,10 +110,10 @@ class BackupWMSModule:
                 return False, "Aucune table trouvée dans la base.", None
 
             with open(out_path, "w", encoding="utf-8") as f:
-                f.write(f"-- NTL SysToolbox SQL Backup\n")
+                f.write("-- NTL SysToolbox SQL Backup\n")
                 f.write(f"-- Database: {dbc.db}\n")
                 f.write(f"-- Generated: {datetime.now().isoformat(timespec='seconds')}\n\n")
-                f.write(f"SET FOREIGN_KEY_CHECKS=0;\n\n")
+                f.write("SET FOREIGN_KEY_CHECKS=0;\n\n")
 
                 for table in tables:
                     with conn.cursor() as cur:
@@ -137,7 +128,6 @@ class BackupWMSModule:
                     f.write(f"DROP TABLE IF EXISTS `{table}`;\n")
                     f.write(create_stmt + ";\n\n")
 
-                    # Dump data
                     with conn.cursor() as cur:
                         cur.execute(f"SELECT * FROM `{table}`")
                         cols = [d[0] for d in cur.description] if cur.description else []
@@ -156,11 +146,9 @@ class BackupWMSModule:
                             for r in rows:
                                 vals = []
                                 for v in r:
-                                    # bytes -> hex literal
                                     if isinstance(v, (bytes, bytearray)):
                                         vals.append("0x" + bytes(v).hex())
                                     else:
-                                        # conn.escape ajoute les quotes si nécessaire
                                         vals.append(conn.escape(v))
                                 values_lines.append("(" + ", ".join(vals) + ")")
                             f.write(",\n".join(values_lines) + ";\n\n")
@@ -168,7 +156,6 @@ class BackupWMSModule:
                 f.write("SET FOREIGN_KEY_CHECKS=1;\n")
 
             return True, "Dump SQL généré.", out_path
-
         except Exception as e:
             return False, f"{e}", None
 
@@ -184,7 +171,6 @@ class BackupWMSModule:
                 return False, "Aucune table trouvée dans la base.", None
 
             if not table:
-                # fallback : première table
                 table = tables[0]
 
             if table not in tables:
@@ -208,13 +194,33 @@ class BackupWMSModule:
                         w.writerows(rows)
 
             return True, f"Export CSV généré (table={table}).", out_path
-
         except Exception as e:
             return False, f"{e}", None
 
     def run(self) -> ModuleResult:
         started = datetime.now().isoformat(timespec="seconds")
         dbc = self._load_db_config()
+
+        print("\nExécution des sauvegardes...")
+
+        try:
+            conn = self._connect(dbc)
+        except Exception as e:
+            msg = f"Connexion MySQL impossible: {e}"
+            return ModuleResult(
+                module="backup_wms",
+                status="ERROR",
+                summary="Sauvegarde WMS impossible (connexion DB KO)",
+                details={
+                    "host": dbc.host,
+                    "port": dbc.port,
+                    "db": dbc.db,
+                    "sql": f"FAIL ({msg})",
+                    "csv": f"FAIL ({msg})",
+                },
+                artifacts={},
+                started_at=started,
+            ).finish()
 
         sql_ok = False
         csv_ok = False
@@ -223,37 +229,12 @@ class BackupWMSModule:
         sql_path = None
         csv_path = None
 
-        print("\nExécution des sauvegardes...")
-
-        try:
-            conn = self._connect(dbc)
-        except Exception as e:
-            # Si pas de connexion, les deux échouent
-            sql_msg = f"Connexion MySQL impossible: {e}"
-            csv_msg = f"Connexion MySQL impossible: {e}"
-            status = "ERROR"
-            return ModuleResult(
-                module="backup_wms",
-                status=status,
-                summary="Sauvegarde WMS impossible (connexion DB KO)",
-                details={
-                    "host": dbc.host,
-                    "port": dbc.port,
-                    "db": dbc.db,
-                    "sql": f"FAIL ({sql_msg})",
-                    "csv": f"FAIL ({csv_msg})",
-                },
-                artifacts={},
-                started_at=started,
-            ).finish()
-
         try:
             sql_ok, sql_msg, sql_path = self._dump_sql(conn, dbc, out_dir="reports/backup/sql")
             print(f"SQL: {'OK' if sql_ok else 'ERROR'} ({sql_msg})")
 
             csv_ok, csv_msg, csv_path = self._export_csv(conn, dbc, out_dir="reports/backup/csv")
             print(f"CSV: {'OK' if csv_ok else 'ERROR'} ({csv_msg})")
-
         finally:
             try:
                 conn.close()
