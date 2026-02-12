@@ -1,46 +1,69 @@
-# src/ntlsystoolbox/core/result.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
-STATUS_TO_EXIT_CODE = {
-    "SUCCESS": 0,
-    "WARNING": 1,
-    "CRITICAL": 2,
-    "ERROR": 3,
-    "UNKNOWN": 4,
-}
+STATUS_SUCCESS = "SUCCESS"
+STATUS_WARNING = "WARNING"
+STATUS_ERROR = "ERROR"
+STATUS_UNKNOWN = "UNKNOWN"
 
 
-def exit_code_for(status: str) -> int:
-    return STATUS_TO_EXIT_CODE.get(status.upper(), 4)
+def status_to_exit_code(status: str) -> int:
+    """
+    Codes simples pour supervision :
+    0 = OK
+    1 = WARNING
+    2 = ERROR
+    3 = UNKNOWN (fallback)
+    """
+    s = (status or "").upper()
+    if s == STATUS_SUCCESS:
+        return 0
+    if s == STATUS_WARNING:
+        return 1
+    if s == STATUS_ERROR:
+        return 2
+    return 3
+
+
+def status_from_two_flags(a_ok: bool, b_ok: bool) -> str:
+    # utile pour backup SQL/CSV
+    if a_ok and b_ok:
+        return STATUS_SUCCESS
+    if a_ok or b_ok:
+        return STATUS_WARNING
+    return STATUS_ERROR
 
 
 @dataclass
 class ModuleResult:
     module: str
     status: str
-    summary: str = ""
+    summary: str
     details: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, str] = field(default_factory=dict)
-    started_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
-    ended_at: str | None = None
-
-    @property
-    def exit_code(self) -> int:
-        return exit_code_for(self.status)
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    exit_code: int = 3
 
     def finish(self) -> "ModuleResult":
+        if self.started_at is None:
+            self.started_at = datetime.now().isoformat(timespec="seconds")
         self.ended_at = datetime.now().isoformat(timespec="seconds")
+        self.exit_code = status_to_exit_code(self.status)
         return self
 
-
-def status_from_two_flags(a_ok: bool, b_ok: bool) -> str:
-    if a_ok and b_ok:
-        return "SUCCESS"
-    if a_ok or b_ok:
-        return "WARNING"
-    return "ERROR"
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "module": self.module,
+            "status": self.status,
+            "summary": self.summary,
+            "details": self.details,
+            "artifacts": self.artifacts,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "exit_code": self.exit_code,
+        }
