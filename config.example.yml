@@ -1,0 +1,23 @@
+infrastructure:
+  dc01_ip: "192.168.10.10"
+  dc02_ip: "192.168.10.11"
+  wms_db_ip: "192.168.10.21"
+  wms_app_ip: "192.168.10.22"
+
+database:
+  host: "192.168.10.21"
+  port: 3306
+  user: "root"
+  password: ""
+  name: "wms"
+  table: ""
+
+audit:
+  scan_cidr: "192.168.10.0/24"
+  components_csv: "inputs/components.csv"
+  eol_soon_days: 180
+
+thresholds:
+  cpu_warn: 90
+  ram_warn: 90
+  disk_warn: 90
