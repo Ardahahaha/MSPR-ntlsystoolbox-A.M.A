@@ -18,12 +18,10 @@ def save_json_report(result: ModuleResult, out_dir: str = "reports/json") -> str
     """
     _ensure_dir(out_dir)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_module = (result.module or "module").replace(" ", "_").lower()
+    safe_module = (result.module or "module").replace(" ", "_").replace("-", "_").lower()
     path = str(Path(out_dir) / f"{safe_module}_{ts}.json")
-
     with open(path, "w", encoding="utf-8") as f:
         json.dump(result.to_dict(), f, indent=2, ensure_ascii=False)
-
     return path
 
 
@@ -37,10 +35,10 @@ def _kv(k: str, v: Any, indent: int = 0) -> None:
 
 
 def _print_diagnostic(details: Dict[str, Any]) -> None:
-    targets = details.get("targets", {})
-    ad = details.get("ad_dns", {})
-    mysql = details.get("mysql", {})
-    local = details.get("local", {})
+    targets = details.get("targets", {}) or {}
+    ad = details.get("ad_dns", {}) or {}
+    mysql = details.get("mysql", {}) or {}
+    local = details.get("local", {}) or {}
 
     _p("\nDétails clés (Diagnostic) :")
     _kv("DC01", targets.get("dc01"))
@@ -51,11 +49,11 @@ def _print_diagnostic(details: Dict[str, Any]) -> None:
     _p("\nAD/DNS :")
     _kv("overall_ok", ad.get("overall_ok"))
     for dc in ("dc01", "dc02"):
-        dc_obj = ad.get(dc, {})
+        dc_obj = ad.get(dc, {}) or {}
         _kv(f"{dc}.overall_ok", dc_obj.get("overall_ok"), indent=2)
-        _kv(f"{dc}.dns_tcp_53.ok", dc_obj.get("dns_tcp_53", {}).get("ok"), indent=2)
-        _kv(f"{dc}.kerberos_88.ok", dc_obj.get("kerberos_88", {}).get("ok"), indent=2)
-        _kv(f"{dc}.ldap_389.ok", dc_obj.get("ldap_389", {}).get("ok"), indent=2)
+        _kv(f"{dc}.dns_tcp_53.ok", (dc_obj.get("dns_tcp_53", {}) or {}).get("ok"), indent=2)
+        _kv(f"{dc}.kerberos_88.ok", (dc_obj.get("kerberos_88", {}) or {}).get("ok"), indent=2)
+        _kv(f"{dc}.ldap_389.ok", (dc_obj.get("ldap_389", {}) or {}).get("ok"), indent=2)
 
     _p("\nMySQL :")
     _kv("ok", mysql.get("ok"))
@@ -91,12 +89,12 @@ def _print_obsolescence(details: Dict[str, Any], artifacts: Dict[str, str]) -> N
     _kv("action", action)
 
     if action == "scan_range":
-        stats = details.get("stats", {})
-        inv = details.get("inventory", [])
+        stats = details.get("stats", {}) or {}
+        inv = details.get("inventory", []) or []
         _kv("cidr", stats.get("cidr"))
         _kv("found_hosts", stats.get("found_hosts"))
         _kv("ports_checked", stats.get("ports_checked"))
-        # Affiche un aperçu
+
         if inv:
             _p("\nAperçu inventaire (max 10) :")
             for h in inv[:10]:
@@ -106,9 +104,10 @@ def _print_obsolescence(details: Dict[str, Any], artifacts: Dict[str, str]) -> N
 
     elif action == "list_versions_eol":
         product = details.get("product")
-        rows = details.get("rows", [])
+        rows = details.get("rows", []) or []
         _kv("product", product)
         _kv("rows_count", len(rows))
+
         if rows:
             _p("\nAperçu versions (max 12) :")
             for r in rows[:12]:
@@ -117,9 +116,9 @@ def _print_obsolescence(details: Dict[str, Any], artifacts: Dict[str, str]) -> N
                 _kv("eol", r.get("eol_date") or r.get("eol"), indent=4)
                 _kv("status", r.get("support_status"), indent=4)
 
-    elif action == "csv_to_eol_and_report":
-        report = details.get("report", {})
-        scan = details.get("scan", {})
+    elif action in ("csv_to_eol_and_report", "csv_to_report"):
+        report = details.get("report", {}) or {}
+        scan = details.get("scan", {}) or {}
         counts = (report.get("counts") or {})
         _kv("csv_path", details.get("csv_path"))
         _kv("scan_enabled", scan.get("enabled"))
@@ -144,16 +143,19 @@ def print_result(
     verbose: bool = False,
 ) -> None:
     """
-    - json_only=True  => affiche uniquement le chemin du JSON (utile pour scripts)
-    - quiet=True      => une ligne compacte
-    - verbose=True    => affiche des détails clés par module
+    - json_only=True => affiche uniquement le chemin du JSON (utile pour scripts)
+    - quiet=True => une ligne compacte
+    - verbose=True => affiche des détails clés par module
     """
     if json_only:
         print(json_path or "")
         return
 
     if quiet:
-        print(f"{result.module} {result.status} - {result.summary}" + (f" | {json_path}" if json_path else ""))
+        print(
+            f"{result.module} {result.status} - {result.summary}"
+            + (f" | {json_path}" if json_path else "")
+        )
         return
 
     _p("\n==============================")
@@ -170,12 +172,18 @@ def print_result(
                 _print_diagnostic(result.details or {})
             elif result.module == "backup_wms":
                 _print_backup(result.details or {}, result.artifacts or {})
-            elif result.module == "obsolescence":
+            elif result.module in ("obsolescence", "audit_obsolescence", "audit-obsolescence"):
                 _print_obsolescence(result.details or {}, result.artifacts or {})
             else:
                 _p("\nDétails :")
                 _p(json.dumps(result.details or {}, indent=2, ensure_ascii=False))
         except Exception:
-            # fallback si un détail casse l'affichage
             _p("\nDétails :")
             _p(json.dumps(result.details or {}, indent=2, ensure_ascii=False))
+
+
+# Compat: si quelqu’un a encore ntlsystoolbox.main:main dans un vieux script
+def main(argv: Optional[list[str]] = None) -> int:
+    from ntlsystoolbox.cli import main as cli_main
+
+    return cli_main(argv)
