@@ -5,16 +5,29 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ntl-systoolbox"
 version = "0.1.0"
-description = "Outil CLI de diagnostic et backup système"
+description = "Outil CLI NTL SysToolbox pour le projet MSPR"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Ardahahaha"}
+]
 dependencies = [
-    "click", # Fortement recommandé pour éviter les input()
-    "colorama",
-    # Ajoute tes autres dépendances ici
+    "click>=8.0.0",
+    "pyyaml>=6.0.0",
+    "colorama>=0.4.6",
 ]
 
 [project.scripts]
-# Format : nom-commande = package.module:fonction
+# Cette ligne crée la commande système 'ntl-systoolbox'
+# Elle pointe vers la fonction main() dans src/ntlsystoolbox/cli.py
 ntl-systoolbox = "ntlsystoolbox.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["ntlsystoolbox*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yml", "*.yaml", "*.json"]
