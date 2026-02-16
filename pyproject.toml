@@ -9,19 +9,17 @@ description = "Boîte à outils d'administration système NTL (Diagnostic, Backu
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "psutil>=5.9.0",
-    "pymysql>=1.0.0",
-    "requests>=2.31.0",
-    "pyyaml>=6.0.0"
+  "psutil>=5.9.0",
+  "pymysql>=1.0.0",
+  "requests>=2.31.0",
+  "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0"
-]
+dev = ["pytest>=8.0.0"]
 
 [project.scripts]
-ntl-systoolbox = "ntlsystoolbox.main:main"
+ntl-systoolbox = "ntlsystoolbox.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
