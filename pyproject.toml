@@ -1,33 +1,19 @@
+cat > pyproject.toml <<'EOF'
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntl-systoolbox"
-version = "0.1.0"
-description = "Outil CLI NTL SysToolbox pour le projet MSPR"
-readme = "README.md"
-requires-python = ">=3.10"
-authors = [
-    {name = "Ardahahaha"}
-]
+version = "1.0.0"
 dependencies = [
-    "click>=8.0.0",
-    "pyyaml>=6.0.0",
-    "colorama>=0.4.6",
+    "pyyaml",
+    "requests"
 ]
 
 [project.scripts]
-# Cette ligne crée la commande système 'ntl-systoolbox'
-# Elle pointe vers la fonction main() dans src/ntlsystoolbox/cli.py
 ntl-systoolbox = "ntlsystoolbox.cli:main"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["ntlsystoolbox*"]
-
-[tool.setuptools.package-data]
-"*" = ["*.yml", "*.yaml", "*.json"]
+EOF
